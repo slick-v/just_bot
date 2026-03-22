@@ -4,77 +4,63 @@ from langchain.memory import ConversationBufferMemory
 from langchain_core.prompts import ChatPromptTemplate , MessagesPlaceholder
 from langchain.memory  import ConversationBufferMemory
 
+from langgraph.graph import StateGraph,END
+from langchain_core.messages import HumanMessage, AIMessage
 
+
+from state import AgentState
+from tools import caluculator
 
 # Load Model
 llm = ChatOllama(model="llama3")
 
+# agent_Node
+def agent_node(state:AgentState):
 
-# memory
-memory = ConversationBufferMemory(return_messages=True)
+    messages = state["messages"]
 
-# caluculator tool
-def caluculator(expression: str):
-    try:
-        result = eval(expression)
-        return str(result)
-    except:
-        return "Invalid math expression"
+    user_message = messages[-1].content
 
+    # simple tool logic
+    if any(op in user_message for op in ["+", "-", "*", "/"]):
 
-# define prompt
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You Are a helpful Ai Assisitant, "
-    "if  user asks math question, use the caluculator provided,"
-    "expalin the reson clearly"),
+        tool_result = caluculator(user_message)
 
-    # memory will be inserted here
-    MessagesPlaceholder(variable_name="history"),
+        response = llm.invoke(f"caluculator result is {tool_result}, expalain it")
+    else:
+        response = llm.invoke(user_message)
 
-    ("human" , "{question}")
+    messages.append(AIMessage(content=response.content))
 
-])
+    return {"messages": messages}
 
+# graph_node
 
-# connect prompt -> model
-chain = prompt | llm
+graph =StateGraph(AgentState)
+
+graph.add_node("agent", agent_node)
+graph.set_entry_point("agent")
+graph.add_edge("agent", END)
+
+app =graph.compile()
 
 
 # chat loop
+
+state = {"messages": []}
 while True:
     user_input = input("You: ")
 
     if user_input.lower() == "exit":
         break
 
-    # simple logic to detect math expression
-    if any(op in user_input for op in ["+" , "-", "*" , "/"]):
+    state["messages"].append(
+       HumanMessage(content=user_input)
 
-        tool_result = caluculator(user_input)
+   )
+    state = app.invoke(state)
 
-        user_input =  f"""
-        user question: {user_input}
-        calucualtor result: {tool_result}
-        explain the result
-
-    """
-
-    # load history from memory
-    history = memory.load_memory_variables({})["history"]
-
-    # get response
-    response = chain.invoke({
-        "question" : user_input,
-        "history": history
-    })
-
-    # response = chain.invoke({"question" : user_input})
-
-    print("Bot : ", response.content)
+    print("Bot : ", state["messages"][-1].content)
 
 
-    # save conversation to memory
-    memory.save_context(
-        {"input": user_input},
-        {"output": response.content}
-    )
+   
